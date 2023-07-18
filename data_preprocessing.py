@@ -1,17 +1,10 @@
 #!/usr/bin/env python
 # -*- coding:utf-8 -*-
 
-import numpy as np
+import binascii
 import dpkt
-import random
-import pickle
-
-import binascii, pickle, os
-from dpkt.utils import inet_to_str
 from scapy.all import *
-# from utils import *
-NGRAM = 50
-PKT_MAX_LEN = 1500
+from utils import *
 
 
 class PCAP_DPKT:
@@ -72,7 +65,7 @@ class PCAP_DPKT:
                                     if 'vpn' not in pcap_file:  # vpn traffic has no Ethernet header
                                         payload = pcap[i].payload
                                     version = payload.version
-                                    if len(payload.payload.payload) <= 0 or len(payload) <= NGRAM:
+                                    if len(payload.payload.payload) <= 0 or len(payload) <= PKT_MIN_LEN:
                                         _invalid_num += 1
                                         continue
                                     sport = payload.payload.sport
@@ -151,7 +144,7 @@ class PCAP_DPKT:
                                     # tcp or udp packet
                                     ip = eth.data
                                     v = ip.v
-                                    if len(ip) <= NGRAM or len(ip.data.data) <= 0:
+                                    if len(ip) <= PKT_MIN_LEN or len(ip.data.data) <= 0:
                                         _invalid_num += 1
                                         continue
                                     if hasattr(ip.data, 'flags'):
@@ -287,7 +280,7 @@ class PCAP_DPKT:
                                 if 'vpn' not in pcap_file:
                                     payload = pcap[i].payload
                                 version = payload.version
-                                if len(payload.payload.payload) <= 0 or len(payload) <= NGRAM:
+                                if len(payload.payload.payload) <= 0 or len(payload) <= PKT_MIN_LEN:
                                     invalid_pcap += 1
                                     continue
                                 src = payload.src
@@ -364,7 +357,7 @@ class PCAP_DPKT:
                                 eth = dpkt.ethernet.Ethernet(buf)
                                 ip = eth.data
                                 v = ip.v
-                                if len(ip) <= NGRAM or len(ip.data.data) <= 0:
+                                if len(ip) <= PKT_MIN_LEN or len(ip.data.data) <= 0:
                                     invalid_pcap += 1
                                     continue
                                 src = ip.src
@@ -468,10 +461,11 @@ class PCAP_DPKT:
 if __name__ == '__main__':
     s_t_main = time.time()
 
-    _file_in_dir = ['./datasets/X-App/']
-    _file_out_dir = './datasets/X-App_flow/'
+    _file_in_dir = ['./data/' + DATA_MAP[NUM_LABELS] + '/']
+    _file_out_dir = './data/' + DATA_MAP[NUM_LABELS] + '_pkt/'
+    # _file_out_dir = './data/' + DATA_MAP[NUM_LABELS] + '_flow/'
 
     traffic = PCAP_DPKT(_file_in_dir, _file_out_dir, byte_len=PKT_MAX_LEN)
-    # traffic.get_idx_saved()
-    traffic.get_flows()
+    traffic.get_idx_saved()
+    # traffic.get_flows()
     print('\ndata_preprocessing.py finished with {}s'.format(time.time() - s_t_main))

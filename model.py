@@ -1,10 +1,6 @@
 #!/usr/bin/env python
 # -*- coding:utf-8 -*-
-import math
-import _thread
-
-import torch
-from torch.nn.parameter import Parameter
+from torch.autograd.function import Function
 from utils import *
 
 
@@ -76,19 +72,24 @@ class OneHot(Function):
 
 
 class RBLJAN_Classifier(nn.Module):
-    def __init__(self, embedding_dim, num_label, position_embed_matrix, overall_label_idx, ngram_header=16, ngram_payload=64, dropout=0.5):
+    def __init__(self, position_embed_matrix, overall_label_idx):
         super(RBLJAN_Classifier, self).__init__()
-        self.embedding_dim = embedding_dim
-        self.num_label = num_label
-        self.ngram_h = ngram_header
-        self.ngram_p = ngram_payload
-        self.header_size = 45
-        self.payload_size = PKT_MAX_LEN - 40
-        self.dropout = dropout
+        self.embedding_dim = EMBEDDING_DIM
+        self.num_label = NUM_LABELS
+        self.ngram_h = NGRAM_HEADER
+        self.ngram_p = NGRAM_PAYLOAD
+        self.size_h = HEADER_LEN
+        self.size_p = PAYLOAD_LEN
+        self.kernel_h = KERNEL_NUM_HEADER
+        self.kernel_p = KERNEL_NUM_PAYLOAD
+        self.head_h = 5
+        self.head_p = 20
+        self.dropout = DROPOUT
         self.position_embed_matrix = position_embed_matrix.float()
         self.overall_label_idx = overall_label_idx
+        self.padding_idx = PADDING_IDX
         # embedding layers（random initialize）   B', L
-        self.header_embed = nn.Embedding(257, self.embedding_dim, padding_idx=256)  # 256 is 'gg', will be set [0,0..0]
+        self.header_embed = nn.Embedding(257, self.embedding_dim, padding_idx=self.padding_idx)  # 256 is 'gg', will be set [0,0..0]
         self.payload_one_hot = OneHot().apply
         self.payload_embed = nn.Linear(257, self.embedding_dim, bias=False)
 
@@ -100,11 +101,11 @@ class RBLJAN_Classifier(nn.Module):
         self.label_p_embed.requires_grad = True
         # self.paddings = True
 
-        self.att_b_h = ATT_BYTE(self.num_label, self.ngram_h)
-        self.att_b_p = ATT_BYTE(self.num_label, self.ngram_p)
+        self.att_b_h = ATT_BYTE(self.num_label, self.ngram_h, self.kernel_h)
+        self.att_b_p = ATT_BYTE(self.num_label, self.ngram_p, self.kernel_p)
 
-        self.att_l_h = ATT_LABEL(self.header_size, 5)
-        self.att_l_p = ATT_LABEL(self.payload_size, 20)
+        self.att_l_h = ATT_LABEL(self.size_h, self.head_h)
+        self.att_l_p = ATT_LABEL(self.size_p, self.head_p)
 
         self.fc = nn.Sequential(
             nn.Linear(4 * self.embedding_dim, self.num_label),
@@ -115,16 +116,16 @@ class RBLJAN_Classifier(nn.Module):
         if x.device != self.overall_label_idx.device:
             self.overall_label_idx = self.overall_label_idx.to(x.device)
             self.position_embed_matrix = self.position_embed_matrix.to(x.device)
-        h = x.transpose(1, 0)[:self.header_size].transpose(1, 0).long()
-        x = x.transpose(1, 0)[PKT_MAX_LEN - self.payload_size:].transpose(1, 0)
+        h = x.transpose(1, 0)[:self.size_h].transpose(1, 0).long()
+        x = x.transpose(1, 0)[PKT_MAX_LEN - self.size_p:].transpose(1, 0)
 
-        H = self.header_embed(h) + self.position_embed_matrix[:self.header_size]
+        H = self.header_embed(h) + self.position_embed_matrix[:self.size_h]
         LH = self.label_h_embed(self.overall_label_idx)
         GH = get_cosine_similarity_matrix(H, LH)  # b * k * len
         att_b_h = self.att_b_h(GH, H)
         att_l_h = self.att_l_h(GH, LH)
 
-        P = self.payload_embed(self.payload_one_hot(x)) + self.position_embed_matrix[:self.payload_size]  # b * l * e (batch_size, len_byte, embedding)
+        P = self.payload_embed(self.payload_one_hot(x)) + self.position_embed_matrix[:self.size_p]  # b * l * e (batch_size, len_byte, embedding)
         # print(self.payload_embed_weight)
         LP = self.label_p_embed(self.overall_label_idx)  # k * e (k is num_label)
         GP = get_cosine_similarity_matrix(P, LP)  # b * k * l
@@ -140,22 +141,24 @@ class RBLJAN_Classifier(nn.Module):
 
 
 class RBLJAN_Classifier_FLOW(nn.Module):
-    def __init__(self, embedding_dim, num_label, num_pkt, position_embed_matrix, overall_label_idx, ngram_header=16, ngram_payload=64, dropout=0.5):
+    def __init__(self, position_embed_matrix, overall_label_idx):
         super(RBLJAN_Classifier_FLOW, self).__init__()
-        self.embedding_dim = embedding_dim
-        self.num_label = num_label
-        self.num_pkt = num_pkt
-        self.ngram_h = ngram_header
-        self.ngram_p = ngram_payload
-        self.header_size = 45
-        self.payload_size = PKT_MAX_LEN - 40
-        self.dropout = dropout
+        self.embedding_dim = EMBEDDING_DIM
+        self.num_label = NUM_LABELS
+        self.num_pkt = FLOW_MAX_LEN
+        self.ngram_h = NGRAM_HEADER
+        self.ngram_p = NGRAM_PAYLOAD
+        self.size_h = HEADER_LEN
+        self.size_p = PAYLOAD_LEN
+        self.kernel_h = KERNEL_NUM_HEADER
+        self.kernel_p = KERNEL_NUM_PAYLOAD
+        self.dropout = DROPOUT
+        self.padding_idx = PADDING_IDX
         self.position_embed_matrix = position_embed_matrix.float()
         self.overall_label_idx = overall_label_idx
         # embedding layers（random initialize）   B', L
-        self.header_embed = nn.Embedding(257, self.embedding_dim, padding_idx=256)  # 256 is 'gg', will be set [0,0..0]
-        self.payload_embed = nn.Embedding(257, self.embedding_dim, padding_idx=256)
-
+        self.header_embed = nn.Embedding(257, self.embedding_dim, padding_idx=self.padding_idx)  # 256 is 'gg', will be set [0,0..0]
+        self.payload_embed = nn.Embedding(257, self.embedding_dim, padding_idx=self.padding_idx)
         self.label_h_embed = nn.Embedding(self.num_label, self.embedding_dim)
         self.label_p_embed = nn.Embedding(self.num_label, self.embedding_dim)
         self.header_embed.requires_grad = True
@@ -164,11 +167,11 @@ class RBLJAN_Classifier_FLOW(nn.Module):
         self.label_p_embed.requires_grad = True
         # self.paddings = True
 
-        self.att_b_h = ATT_BYTE(self.num_label * self.num_pkt, self.ngram_h, self.dropout)
-        self.att_b_p = ATT_BYTE(self.num_label * self.num_pkt, self.ngram_p, self.dropout)
+        self.att_b_h = ATT_BYTE(self.num_label * self.num_pkt, self.ngram_h, self.kernel_h)
+        self.att_b_p = ATT_BYTE(self.num_label * self.num_pkt, self.ngram_p, self.kernel_p)
 
-        self.att_l_h = ATT_LABEL_FLOW(self.header_size, self.num_label, self.num_pkt)
-        self.att_l_p = ATT_LABEL_FLOW(self.payload_size, self.num_label, self.num_pkt)
+        self.att_l_h = ATT_LABEL_FLOW(self.size_h, self.num_label, self.num_pkt)
+        self.att_l_p = ATT_LABEL_FLOW(self.size_p, self.num_label, self.num_pkt)
 
         self.fc = nn.Sequential(
             nn.Linear(4 * self.embedding_dim, self.num_label),
@@ -180,26 +183,26 @@ class RBLJAN_Classifier_FLOW(nn.Module):
         if x.device != self.overall_label_idx.device:
             self.overall_label_idx = self.overall_label_idx.to(x.device)
             self.position_embed_matrix = self.position_embed_matrix.to(x.device)
-        h = x[:, :, : self.header_size].view(-1, self.header_size)
-        x = x[:, :, PKT_MAX_LEN-self.payload_size:].view(-1, self.payload_size)
+        h = x[:, :, : self.size_h].view(-1, self.size_h)
+        x = x[:, :, PKT_MAX_LEN-self.size_p:].view(-1, self.size_p)
 
-        H = self.header_embed(h) + self.position_embed_matrix[:self.header_size]
+        H = self.header_embed(h) + self.position_embed_matrix[:self.size_h]
         LH = self.label_h_embed(self.overall_label_idx)
-        GH = get_cosine_similarity_matrix(H, LH).view(batch_size, -1, self.header_size)  # b * k * len
+        GH = get_cosine_similarity_matrix(H, LH).view(batch_size, -1, self.size_h)  # b * k * len
         att_b_h = self.att_b_h(GH)
-        H = torch.matmul(att_b_h.unsqueeze(1), torch.sum(H.view(batch_size, -1, self.header_size, self.embedding_dim), dim=1)).view(batch_size, -1)
+        H = torch.matmul(att_b_h.unsqueeze(1), torch.sum(H.view(batch_size, -1, self.size_h, self.embedding_dim), dim=1)).view(batch_size, -1)
         att_l_h = self.att_l_h(GH)
         GH = torch.matmul(att_l_h, LH).view(batch_size, -1)
 
-        P = self.payload_embed(x) + self.position_embed_matrix[:self.payload_size]  # b * l * e (batch_size, len_byte, embedding)
+        P = self.payload_embed(x) + self.position_embed_matrix[:self.size_p]  # b * l * e (batch_size, len_byte, embedding)
         # print(self.payload_embed_weight)
 
         LP = self.label_p_embed(self.overall_label_idx)  # k * e (k is num_label)
-        GP = get_cosine_similarity_matrix(P, LP).view(batch_size, -1, self.payload_size)  # b * k * l
+        GP = get_cosine_similarity_matrix(P, LP).view(batch_size, -1, self.size_p)  # b * k * l
 
         att_b_p = self.att_b_p(GP)
         # P = F.avg_pool2d(P, kernel_size=(self.ngram_p, 1), stride=(1, 1))
-        P = torch.matmul(att_b_p.unsqueeze(1), torch.sum(P.view(batch_size, -1, self.payload_size, self.embedding_dim), dim=1)).view(batch_size, -1)
+        P = torch.matmul(att_b_p.unsqueeze(1), torch.sum(P.view(batch_size, -1, self.size_p, self.embedding_dim), dim=1)).view(batch_size, -1)
 
         att_l_p = self.att_l_p(GP)
         GP = torch.matmul(att_l_p, LP).view(batch_size, -1)
@@ -213,14 +216,11 @@ class RBLJAN_Classifier_FLOW(nn.Module):
 
 
 class ATT_BYTE(nn.Module):
-    def __init__(self, num_label, ngram=51):
+    def __init__(self, num_label, ngram=51, out_channels=8):
         super(ATT_BYTE, self).__init__()
         self.num_label = num_label
         self.hidden_size = self.num_label
-        if ngram < 40:
-            self.out_channels = 8   # for header
-        else:
-            self.out_channels = 8   # for payload
+        self.out_channels = out_channels
         self.ngram = ngram
         # self.num_padding = int(self.ngram / 2)
         self.conv = nn.Sequential(  # 卷积函数
@@ -300,21 +300,28 @@ class ATT_LABEL_FLOW(nn.Module):
 
 
 class RBLJAN_GAN(nn.Module):
-    def __init__(self, embedding_dim, num_label, position_embed_matrix, overall_label_idx, ngram_header=10, ngram_payload=50, dropout=0.5):
+    def __init__(self, position_embed_matrix, overall_label_idx):
         super(RBLJAN_GAN, self).__init__()
 
-        self.embedding_dim = embedding_dim
-        self.num_label = num_label
-        self.ngram_h = ngram_header
-        self.ngram_p = ngram_payload
-        self.header_size = 50
-        self.payload_size = PKT_MAX_LEN - 40
-        self.dropout = dropout
+        self.embedding_dim = EMBEDDING_DIM
+        self.num_label = NUM_LABELS
+        self.ngram_h = NGRAM_HEADER
+        self.ngram_p = NGRAM_PAYLOAD
+        self.size_h = HEADER_LEN
+        self.size_p = PAYLOAD_LEN
+        self.kernel_h = KERNEL_NUM_HEADER
+        self.kernel_p = KERNEL_NUM_PAYLOAD
+        self.head_h = 5
+        self.head_p = 20
+        self.dropout = DROPOUT
+        self.padding_idx = PADDING_IDX
+
         self.position_embed_matrix = position_embed_matrix.float()
         self.overall_label_idx = overall_label_idx
+
         # embedding layers（random initialize）   B', L
-        self.header_embed = nn.Embedding(257, self.embedding_dim, padding_idx=256)
-        self.payload_embed = nn.Embedding(257, self.embedding_dim, padding_idx=256)  # 256 is 'gg', will be set [0,0..0]
+        self.header_embed = nn.Embedding(257, self.embedding_dim, padding_idx=self.padding_idx)
+        self.payload_embed = nn.Embedding(257, self.embedding_dim, padding_idx=self.padding_idx)  # 256 is 'gg', will be set [0,0..0]
         self.label_h_embed = nn.Embedding(self.num_label, self.embedding_dim)
         self.label_p_embed = nn.Embedding(self.num_label, self.embedding_dim)
         self.header_embed.requires_grad = True
@@ -322,11 +329,11 @@ class RBLJAN_GAN(nn.Module):
         self.label_h_embed.requires_grad = True
         self.label_p_embed.requires_grad = True
 
-        self.att_b_h = ATT_BYTE(self.num_label, self.ngram_h)
-        self.att_b_p = ATT_BYTE(self.num_label, self.ngram_p)
+        self.att_b_h = ATT_BYTE(self.num_label, self.ngram_h, self.kernel_h)
+        self.att_b_p = ATT_BYTE(self.num_label, self.ngram_p, self.kernel_p)
 
-        self.att_l_h = ATT_LABEL(self.header_size, 5)
-        self.att_l_p = ATT_LABEL(self.payload_size, 20)
+        self.att_l_h = ATT_LABEL(self.size_h, self.head_h)
+        self.att_l_p = ATT_LABEL(self.size_p, self.head_p)
 
         self.fc = nn.Sequential(
             nn.Linear(4 * self.embedding_dim, self.num_label),
@@ -338,16 +345,16 @@ class RBLJAN_GAN(nn.Module):
         if x.device != self.overall_label_idx.device:
             self.overall_label_idx = self.overall_label_idx.to(x.device)
             self.position_embed_matrix = self.position_embed_matrix.to(x.device)
-        h = x.transpose(1, 0)[:self.header_size].transpose(1, 0)
-        x = x.transpose(1, 0)[PKT_MAX_LEN-self.payload_size:].transpose(1, 0)
+        h = x.transpose(1, 0)[:self.size_h].transpose(1, 0)
+        x = x.transpose(1, 0)[PKT_MAX_LEN-self.size_p:].transpose(1, 0)
 
-        H = self.header_embed(h) + self.position_embed_matrix[:self.header_size]
+        H = self.header_embed(h) + self.position_embed_matrix[:self.size_h]
         LH = self.label_h_embed(self.overall_label_idx)
         GH = get_cosine_similarity_matrix(H, LH)    # b * k * len
         att_b_h = self.att_b_h(GH, H)
         att_l_h = self.att_l_h(GH, LH)
 
-        P = self.payload_embed(x) + self.position_embed_matrix[:self.payload_size]  # b * l * e (batch_size, len_byte, embedding)
+        P = self.payload_embed(x) + self.position_embed_matrix[:self.size_p]  # b * l * e (batch_size, len_byte, embedding)
         LP = self.label_p_embed(self.overall_label_idx)  # k * e (k is num_label)
         GP = get_cosine_similarity_matrix(P, LP)  # b * k * l
         att_b_p = self.att_b_p(GP, P)

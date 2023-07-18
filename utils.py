@@ -2,18 +2,20 @@
 # -*- coding:utf-8 -*-
 
 import datetime
-import os, time, sys, gc
+import gc
+import os
 import random
+import time
 from math import sin, cos, pow
+
 import numpy as np
-import torch, pickle
-from sklearn.metrics import accuracy_score, confusion_matrix
-from sklearn.model_selection import train_test_split
+import pickle
+import torch
 import torch.nn as nn
 import torch.nn.functional as F
-import matplotlib.pyplot as plt
-from torch.autograd.function import Function
+from sklearn.metrics import accuracy_score, confusion_matrix
 from sklearn.metrics import classification_report
+from sklearn.model_selection import train_test_split
 from sklearn.utils.multiclass import unique_labels
 
 MODEL_SAVE_PATH = './RBLJAN/model/'
@@ -30,35 +32,33 @@ CLASSES = ['audio', 'chat', 'file', 'mail', 'streaming', 'voip',
            'vpn-audio', 'vpn-chat', 'vpn-file', 'vpn-mail', 'vpn-streaming', 'vpn-voip']
 LABELS = {k: v for k, v in zip(CLASSES, range(len(CLASSES)))}
 
-LABELS_FLOW = {'baidu': 0, 'gmail': 1, 'itunes': 2, 'pplive': 3, 'qq': 4, 'skype': 5, 'sohu': 6, 'taobao': 7,
-               'thunder': 8, 'tudou': 9, 'weibo': 10, 'youku': 11}
-
-# for flow:
-# CLASSES = ['baidu', 'youtube', 'gmail', 'itunes', 'jd', 'kugou', 'pplive', 'qq', 'skype', 'sohu', 'taobao', 'thunder', 'tudou', 'weibo', 'youku']
-# LABELS = {'baidu':0, 'youtube':1, 'gmail':2, 'itunes':3, 'jd':4, 'kugou':5, 'pplive':6,
-#           'qq':7, 'skype':8, 'sohu':9, 'taobao':10, 'thunder':11, 'tudou':12,
-#           'weibo':13, 'youku':14}
-
 NUM_LABELS = len(LABELS)
-PKT_MAX_LEN = 1500
-NGRAM = 50
-NGRAM_HEADER = 16
-NGRAM_PAYLOAD = 50
-PAYLOAD_LEN = 1460
+DATA_MAP = {10: 'USTC-TFC', 12: 'ISCX-VPN', 20: 'X-WEB', 29: 'X-APP'}
 
 CUDA = torch.cuda.is_available()
 DEVICE = 0
 DEVICE_COUNT = torch.cuda.device_count()
 USE_PARALLEL = True
-PADDING_IDX = 256
-if USE_PARALLEL:
-    ALL_DEVICE = ['cuda:{}'.format(i) for i in range(DEVICE_COUNT)]
-else:
-    ALL_DEVICE = ['cuda:0']
+ALL_DEVICE = ['cuda:{}'.format(i) for i in range(DEVICE_COUNT)] if USE_PARALLEL else ['cuda:0']
 
 # model and training
 EMBEDDING_DIM = 256
-OUT_CHANNELS = 8
+
+PKT_MIN_LEN = 50
+PKT_MAX_LEN = 1500
+FLOW_MIN_LEN = 3
+FLOW_MAX_LEN = 10
+
+NGRAM_HEADER = 17
+NGRAM_PAYLOAD = 65
+
+KERNEL_NUM_HEADER = 8
+KERNEL_NUM_PAYLOAD = 8
+
+HEADER_LEN = 45
+PAYLOAD_LEN = PKT_MAX_LEN - 40
+PADDING_IDX = 256
+
 DROPOUT = 0.5
 EXP_PERCENT = 1
 TEST_PERCENT = 0.1
@@ -69,26 +69,28 @@ LR = 0.001
 # adversarial
 RANDOM_SIZE = 100
 
-# flow-level
-OUT_CHANNELS_FLOW = 128
-FLOW_MIN_LEN = 3
-FLOW_MAX_LEN = 10
-
 GAMMA = 2
 LAMBDA = 0.1
 
 
-def get_position_encoding_matrix(E=256, position_max=20000):
+def get_position_encoding_matrix(E=EMBEDDING_DIM, position_max=20000):
+    """generate position encoding matrix
+    :param E: embedding dimension
+    :param position_max: 1500 is enough
+    :return: position encoding matrix with a shape of position_max * E
+    """
     Q = []
     for i in range(position_max):
-        Q.append([j for j in np.array([[sin(i / pow(10000, 2 * x / E)), cos(i / pow(10000, (2 * x + 1) / E))] for x in
-                                       range(int(E / 2))]).flatten()])
+        Q.append([j for j in np.array([[sin(i / pow(10000, 2 * x / E)), cos(i / pow(10000, (2 * x + 1) / E))] for x in range(int(E / 2))]).flatten()])
     return torch.from_numpy(np.array(Q))
 
 
 def get_cosine_similarity_matrix(B, L):
-    # input: Tensor
-    # Returns the p-norm of each row on the given dimension dim of the input tensor
+    """similarity calculation unit
+    :param B: byte embedding, e.g., batch_size * pkt_len * embedding_dim
+    :param L: label embedding, e.g., num_labels * embedding_dim
+    :return: cosine similarity between each byte and each label
+    """
     G = torch.matmul(L, B.transpose(1, 2))  # b * k * l
     B = torch.norm(B, p=2, dim=2)  # B: b * l * e -> b * l, dim = 2 is for e's axis
     L = torch.norm(L, p=2, dim=1)  # L: k * e -> (k,), dim = 1 is also for e's axis
@@ -106,6 +108,12 @@ def get_cosine_similarity_matrix(B, L):
 
 
 def calculate_alpha(y, labels, mode='normal'):
+    """calculate alpha for focal loss
+    :param y: all ground truth
+    :param labels: all candidate labels
+    :param mode: 'invert' is to focus on the samples that are difficult to classify
+    :return: hyperparameter alpha of focal loss
+    """
     alpha = [0] * len(labels)
     for i in y:
         alpha[i] += 1
@@ -118,6 +126,11 @@ def calculate_alpha(y, labels, mode='normal'):
 
 
 class Loader:
+    """load data to batches
+    :param X: all preprocessed packet sequences
+    :param y: corresponding labels
+    :param batch_size:
+    """
     def __init__(self, X, y, batch_size):
         self.X = X
         self.y = y
@@ -125,7 +138,6 @@ class Loader:
         self.num_batch = int((len(self.y) - 1) / batch_size)
         self.data = []
         self.alpha = calculate_alpha(self.y, LABELS, mode='invert')
-
         # self.load_all_batches()
 
     def load_all_batches(self):
@@ -169,6 +181,7 @@ class Loader:
         return len(self.y) | len(self.data)
 
     def __getitem__(self, i):
+        """If there is not enough memory, only load one batch at a time"""
         if len(self.data) > i:
             return self.data[i]
         batch_X = self.X[i * self.batch_size: (i + 1) * self.batch_size]
@@ -181,24 +194,26 @@ class Loader:
         return batch_X, batch_y
 
 
-# Turn file to X and y. exp_percent is put into model(others are discarded),
-# test_percent is test_size
-def get_dataloader(exp_percent, test_percent, batch_size, padding=False):
+def get_dataloader(exp_percent, test_percent, batch_size):
+    """turn pickle file to X and y, then goto loader
+    :param exp_percent: Percentage used for experiments(exp_percent for training and evaluating, others for testing)
+    :param test_percent: Percentage used for eval
+    """
     _s_t = time.time()
     print('start load X and y')
     X = []
     y = []
     if NUM_LABELS == 29:
-        pickle_dir = './datasets/X-APP_PKL/'
+        pickle_dir = './data/X-APP_PKL/'
     elif NUM_LABELS == 12:
-        pickle_dir = './datasets/ISCX-VPN_PKL/'
+        pickle_dir = './data/ISCX-VPN_PKL/'
     elif NUM_LABELS == 20:
         if 'Cridex' in CLASSES:
-            pickle_dir = './datasets/USTC-TFC_PKL/'
+            pickle_dir = './data/USTC-TFC_PKL/'
         else:
-            pickle_dir = './datasets/X-WEB_PKL/'
+            pickle_dir = './data/X-WEB_PKL/'
     else:
-        pickle_dir = './datasets/USTC-TFC_PKL/'
+        pickle_dir = './data/USTC-TFC_PKL/'
     for i in CLASSES:
         file_name = pickle_dir + i + '.pkl'
         with open(file_name, 'rb') as f1:
@@ -217,14 +232,12 @@ def get_dataloader(exp_percent, test_percent, batch_size, padding=False):
     y = np.array(y, dtype=int)
     if 0 < exp_percent < 1:
         print('start random select data(train_test_split) with exp_percent: {}'.format(exp_percent))
-        X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=exp_percent, shuffle=True, random_state=41,
-                                                            stratify=y)
+        X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=exp_percent, shuffle=True, random_state=41, stratify=y)
         X = X_test
         y = y_test
 
     print('start train_test_split with test_percent: {}'.format(test_percent))
-    X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=test_percent, shuffle=True, random_state=41,
-                                                        stratify=y)
+    X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=test_percent, shuffle=True, random_state=41, stratify=y)
 
     print('start load batches of train and test...')
     train_loader, test_loader = Loader(X_train, y_train, batch_size), Loader(X_test, y_test, batch_size)
@@ -298,14 +311,14 @@ def get_flow_dataloader(data_dir, batch_size, max_flow_len=FLOW_MAX_LEN, max_pkt
 
 class FocalLoss(nn.Module):
 
-    def __init__(self, class_num, alpha=None, gamma=2, size_average=True, is_reverse=False):
+    def __init__(self, num_labels=NUM_LABELS, alpha=None, gamma=GAMMA, size_average=True, is_reverse=False):
         super(FocalLoss, self).__init__()
         if alpha is None:
-            self.alpha = torch.ones(class_num, 1)
+            self.alpha = torch.ones(num_labels, 1)
         else:
             self.alpha = alpha
         self.gamma = gamma
-        self.class_num = class_num
+        self.class_num = num_labels
         self.size_average = size_average
         self.is_reverse = is_reverse
 

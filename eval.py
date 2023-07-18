@@ -1,6 +1,4 @@
-from model import *
 from utils import *
-import gc
 
 if __name__ == '__main__':
 

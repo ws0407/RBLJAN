@@ -6,22 +6,19 @@ from model import *
 from torch.autograd import Variable
 
 
-def train_RBLJAN_GAN(is_save=True, is_load=False, is_shuffle=False):
-    if EMBEDDING_DIM == 256:
-        with open('./tmp_variable/p_e_matrix_256.variable', 'rb') as f1:
+def train_RBLJAN_no_GAN(is_save=True, is_load=False, is_shuffle=False):
+    try:
+        with open('./tmp_variable/p_e_matrix_' + str(EMBEDDING_DIM) + '.variable', 'rb') as f1:
             p_e_matrix = pickle.load(f1)[:PKT_MAX_LEN + NGRAM_PAYLOAD]
-    else:
-        with open('./tmp_variable/p_e_matrix.variable', 'rb') as f1:
-            p_e_matrix = pickle.load(f1)[:PKT_MAX_LEN + NGRAM_PAYLOAD]
+    except FileNotFoundError:
+        p_e_matrix = get_position_encoding_matrix(EMBEDDING_DIM)
 
     overall_label_idx = (torch.arange(0, NUM_LABELS)).long()
     if CUDA:
         overall_label_idx = overall_label_idx.cuda(DEVICE)
         p_e_matrix = p_e_matrix.cuda(DEVICE)
 
-    # model = BLJAN(EMBEDDING_DIM, NUM_LABELS, NGRAM, DROPOUT, p_e_matrix)
-    # model = EBLJAN_SA_CNN_Discriminator(EMBEDDING_DIM, NUM_LABELS, p_e_matrix, overall_label_idx, NGRAM_HEADER, NGRAM_PAYLOAD, DROPOUT)
-    model = RBLJAN_GAN(EMBEDDING_DIM, NUM_LABELS, p_e_matrix, overall_label_idx, NGRAM_HEADER, NGRAM_PAYLOAD, DROPOUT)
+    model = RBLJAN_GAN(p_e_matrix, overall_label_idx)
     print(model)
     optimizer = torch.optim.Adam(model.parameters(), lr=LR)
 
@@ -44,8 +41,7 @@ def train_RBLJAN_GAN(is_save=True, is_load=False, is_shuffle=False):
     gc.collect()
 
     num_batch = train_loader.num_batch
-    loss_func1 = FocalLoss(NUM_LABELS, alpha=(train_loader.alpha if num_batch > 2000 else None), gamma=GAMMA,
-                           size_average=True)
+    loss_func1 = FocalLoss(alpha=(train_loader.alpha if num_batch > 2000 else None))
 
     cur_epoch, cur_loss = 0, 0
     best_acc, best_f1 = 0, 0
@@ -136,21 +132,18 @@ def train_RBLJAN_GAN(is_save=True, is_load=False, is_shuffle=False):
                 print(num, end='')
             print()
         # print(test_c_matrix)
-        if epoch > 100 and all_f1[-1] < best_f1 and all_f1[-2] < best_f1 and all_f1[-3] < best_f1 and all_f1[
-            -4] < best_f1 and all_f1[-5] < best_f1 and all_test_acc[-1] < best_acc and all_test_acc[-2] < best_acc \
-                and all_test_acc[-3] < best_acc and all_test_acc[-4] < best_acc and all_test_acc[-5] < best_acc:
+        if epoch > 60 and max(all_f1[-5:]) < best_f1 and max(all_test_acc[-5:]) < best_acc:
             print('early stop with epoch: {}, \nbest test accuracy: {}, best f1-score: {}'.format(
                 epoch, best_acc, best_f1))
             break
 
 
 def train_RBLJAN_FLOW(is_save=True, is_load=False, is_shuffle=False):
-    if EMBEDDING_DIM == 256:
-        with open('./tmp_variable/p_e_matrix_256.variable', 'rb') as f1:
+    try:
+        with open('./tmp_variable/p_e_matrix_' + str(EMBEDDING_DIM) + '.variable', 'rb') as f1:
             p_e_matrix = pickle.load(f1)[:PKT_MAX_LEN + NGRAM_PAYLOAD]
-    else:
-        with open('./tmp_variable/p_e_matrix.variable', 'rb') as f1:
-            p_e_matrix = pickle.load(f1)[:PKT_MAX_LEN + NGRAM_PAYLOAD]
+    except FileNotFoundError:
+        p_e_matrix = get_position_encoding_matrix(EMBEDDING_DIM)
 
     overall_label_idx = (torch.arange(0, NUM_LABELS)).long()
     if CUDA:
@@ -158,8 +151,7 @@ def train_RBLJAN_FLOW(is_save=True, is_load=False, is_shuffle=False):
         p_e_matrix = p_e_matrix.cuda(DEVICE)
 
     # model = BLJAN(EMBEDDING_DIM, NUM_LABELS, NGRAM, DROPOUT, p_e_matrix)
-    model = RBLJAN_Classifier_FLOW(EMBEDDING_DIM, NUM_LABELS, FLOW_MAX_LEN, p_e_matrix, overall_label_idx, NGRAM_HEADER,
-                                   NGRAM_PAYLOAD, DROPOUT)
+    model = RBLJAN_Classifier_FLOW(p_e_matrix, overall_label_idx)
     print(model)
     optimizer = torch.optim.Adam(model.parameters(), lr=LR)
 
@@ -175,13 +167,12 @@ def train_RBLJAN_FLOW(is_save=True, is_load=False, is_shuffle=False):
     #     print("Use", len(gpus_idx), 'gpus:', gpus_idx)
     #     model = nn.DataParallel(model, device_ids=gpus_idx)
 
-    train_loader, test_loader = get_flow_dataloader("./datasets/USTC-TFC-2016_result_doc_flow/", 32)
+    train_loader, test_loader = get_flow_dataloader("./data/USTC-TFC-2016_result_doc_flow/", 32)
     train_loader.load_all_batches()
     test_loader.load_all_batches()
 
     num_batch = train_loader.num_batch
-    loss_func1 = FocalLoss(NUM_LABELS, alpha=(train_loader.alpha if num_batch > 1000 else None), gamma=GAMMA,
-                           size_average=True)
+    loss_func1 = FocalLoss(alpha=(train_loader.alpha if num_batch > 1000 else None))
 
     cur_epoch, cur_loss = 0, 0
     best_acc, best_f1 = 0, 0
@@ -271,27 +262,24 @@ def train_RBLJAN_FLOW(is_save=True, is_load=False, is_shuffle=False):
                 print(num, end='')
             print()
         # print(test_c_matrix)
-        if epoch > 100 and all_f1[-1] < best_f1 and all_f1[-2] < best_f1 and all_f1[-3] < best_f1 and all_f1[
-            -4] < best_f1 and all_f1[-5] < best_f1 and all_test_acc[-1] < best_acc and all_test_acc[-2] < best_acc \
-                and all_test_acc[-3] < best_acc and all_test_acc[-4] < best_acc and all_test_acc[-5] < best_acc:
-            print('early stop with epoch: {}, \nbest test accuracy: {}, best f1-score: {}'.format(
+        if epoch > 60 and max(all_f1[-5:]) < best_f1 and max(all_test_acc[-5:]) < best_acc:
+            print('early stop with epoch: {}, \nbest test accuracy: {}, best test f1-score: {}'.format(
                 epoch, best_acc, best_f1))
             break
 
 
 def train_RBLJAN(is_save=False, is_load=False, is_shuffle=False, device=0, model_type='cnn'):
-    if EMBEDDING_DIM == 256:
-        with open('./tmp_variable/p_e_matrix_256.variable', 'rb') as f1:
+    try:
+        with open('./tmp_variable/p_e_matrix_' + str(EMBEDDING_DIM) + '.variable', 'rb') as f1:
             p_e_matrix = pickle.load(f1)[:PKT_MAX_LEN + NGRAM_PAYLOAD]
-    else:
-        with open('./tmp_variable/p_e_matrix.variable', 'rb') as f1:
-            p_e_matrix = pickle.load(f1)[:PKT_MAX_LEN + NGRAM_PAYLOAD]
+    except FileNotFoundError:
+        p_e_matrix = get_position_encoding_matrix(EMBEDDING_DIM)
+
     overall_label_idx = (torch.arange(0, NUM_LABELS)).long()
     if CUDA:
         overall_label_idx = overall_label_idx.cuda(DEVICE)
         p_e_matrix = p_e_matrix.cuda(DEVICE)
-    D_model = RBLJAN_Classifier(EMBEDDING_DIM, NUM_LABELS, p_e_matrix, overall_label_idx, NGRAM_HEADER,
-                                NGRAM_PAYLOAD, DROPOUT)
+    D_model = RBLJAN_Classifier(p_e_matrix, overall_label_idx)
     print(D_model)
     D_optimizer = torch.optim.Adam(D_model.parameters(), lr=LR)
 
@@ -329,10 +317,8 @@ def train_RBLJAN(is_save=False, is_load=False, is_shuffle=False, device=0, model
 
     num_batch = train_loader.num_batch
 
-    D_loss_func = FocalLoss(NUM_LABELS, alpha=(train_loader.alpha if num_batch > 2000 else None), gamma=GAMMA,
-                            size_average=True, is_reverse=False)
-    G_loss_func = FocalLoss(NUM_LABELS, alpha=(train_loader.alpha if num_batch > 2000 else None), gamma=GAMMA,
-                            size_average=True, is_reverse=True)
+    D_loss_func = FocalLoss(alpha=(train_loader.alpha if num_batch > 2000 else None), is_reverse=False)
+    G_loss_func = FocalLoss(alpha=(train_loader.alpha if num_batch > 2000 else None), is_reverse=True)
 
     cur_epoch, cur_loss = 0, 0
     D_best_acc, D_best_f1, G_best_acc = 0, 0, 0
@@ -378,7 +364,8 @@ def train_RBLJAN(is_save=False, is_load=False, is_shuffle=False, device=0, model
             class_mask.scatter_(1, batch_y.view(-1, 1).data, 1.)  # one-hot vector
             x_inject = torch.cat((x_inject, class_mask.float()), dim=1)
             G_model.eval()
-            batch_X_fake = G_model(x_inject, batch_X).detach() if model_type != 'rnn' else G_model(x_inject, batch_X, states).detach()
+            batch_X_fake = G_model(x_inject, batch_X).detach() if model_type != 'rnn' else G_model(x_inject, batch_X,
+                                                                                                   states).detach()
 
             out1, out2 = D_model(batch_X_fake)
             D_loss_fake_1 = D_loss_func(out1, batch_y.long())
@@ -453,12 +440,7 @@ def train_RBLJAN(is_save=False, is_load=False, is_shuffle=False, device=0, model
             G_acc, G_best_acc, (test_acc_real + test_acc_fake) / 2, D_best_acc,
                    (all_test_f1_real[-1] + all_test_f1_fake[-1]) / 2, D_best_f1))
 
-        if epoch > 60 and all_test_f1_real[-1] < D_best_f1 and all_test_f1_real[-2] < D_best_f1 and all_test_f1_real[
-            -3] < D_best_f1 and all_test_f1_real[
-            -4] < D_best_f1 and all_test_f1_real[-5] < D_best_f1 and all_test_acc_real[-1] < D_best_acc and \
-                all_test_acc_real[-2] < D_best_acc \
-                and all_test_acc_real[-3] < D_best_acc and all_test_acc_real[-4] < D_best_acc and all_test_acc_real[
-            -5] < D_best_acc:
+        if epoch > 60 and max(all_test_f1_real[-5:]) < D_best_f1 and max(all_test_acc_real[-5:]) < D_best_acc:
             print('early stop with epoch: {}, \nbest test accuracy: {}, best f1-score: {}'.format(
                 epoch, D_best_acc, D_best_f1))
             break
@@ -467,9 +449,10 @@ def train_RBLJAN(is_save=False, is_load=False, is_shuffle=False, device=0, model
 if __name__ == '__main__':
     s_t = time.time()
     print('CUDA: {} of {}'.format(CUDA, DEVICE))
-    print('start train...')
+    print('start to train...')
 
-    train_RBLJAN_GAN(is_save=False, is_load=False, is_shuffle=False)
-
+    # train_RBLJAN(is_save=True, model_type='cnn')
+    train_RBLJAN_no_GAN(is_save=False, is_load=False, is_shuffle=False)
     # train_RBLJAN_FLOW(is_save=False, is_load=False, is_shuffle=False)
+    
     print('training done with {}s'.format(time.time() - s_t))
