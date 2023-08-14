@@ -114,7 +114,7 @@ def train_RBLJAN_no_GAN(is_save=True, is_load=False, is_shuffle=False):
             best_f1 = all_f1[-1]
             print('>> test f1-score increased !!!')
             if is_save:
-                save_model(model, epoch, optimizer, loss, best_acc, best_f1, full=True)
+                save_model(model, epoch)
         print('>> epoch: {} ok:\n'
               '>> >> train avg loss: {}\n'
               '>> >> test accuracy: {}, best test accuracy: {},\n'
@@ -244,7 +244,7 @@ def train_RBLJAN_FLOW(is_save=True, is_load=False, is_shuffle=False):
             best_f1 = all_f1[-1]
             print('>> test f1-score increased !!!')
             if is_save:
-                save_model(model, epoch, optimizer, loss, best_acc, best_f1, full=True)
+                save_model(model, epoch)
         print('>> epoch: {} ok:\n'
               '>> >> train avg loss: {}\n'
               '>> >> test accuracy: {}, best test accuracy: {},\n'
@@ -430,7 +430,7 @@ def train_RBLJAN(is_save=False, is_load=False, is_shuffle=False, device=0, model
             D_best_f1 = (all_test_f1_real[-1] + all_test_f1_fake[-1]) / 2
             print('>> [D] f1-score increased !!!')
         if is_save:
-            save_model(D_model, epoch, D_optimizer, D_total_loss_real, full=True)
+            save_model(D_model, epoch)
         print('>> epoch: {} ok:\n'
               '>> >> D avg real loss: {}, D avg fake loss: {}, G avg loss: {}\n'
               '>> >> G accuracy: {}, G best accuracy: {}\n'

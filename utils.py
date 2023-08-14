@@ -17,8 +17,9 @@ from sklearn.metrics import accuracy_score, confusion_matrix
 from sklearn.metrics import classification_report
 from sklearn.model_selection import train_test_split
 from sklearn.utils.multiclass import unique_labels
+from torch.autograd import Variable
 
-MODEL_SAVE_PATH = './RBLJAN/model/'
+MODEL_SAVE_PATH = './model/'
 
 # CLASSES = ['Cridex', 'Geodo', 'Htbot', 'Miuref', 'Neris', 'Nsis-ay', 'Shifu', 'Tinba', 'Virut', 'Zeus']
 # CLASSES = ['amazon', 'baidu', 'bing', 'douban', 'facebook', 'google', 'imdb', 'instagram', 'iqiyi', 'jd',
@@ -203,22 +204,12 @@ def get_dataloader(exp_percent, test_percent, batch_size):
     print('start load X and y')
     X = []
     y = []
-    if NUM_LABELS == 29:
-        pickle_dir = './data/X-APP_PKL/'
-    elif NUM_LABELS == 12:
-        pickle_dir = './data/ISCX-VPN_PKL/'
-    elif NUM_LABELS == 20:
-        if 'Cridex' in CLASSES:
-            pickle_dir = './data/USTC-TFC_PKL/'
-        else:
-            pickle_dir = './data/X-WEB_PKL/'
-    else:
-        pickle_dir = './data/USTC-TFC_PKL/'
+    pickle_dir = './data/' + DATA_MAP[NUM_LABELS] + '_PKL/'
     for i in CLASSES:
         file_name = pickle_dir + i + '.pkl'
         with open(file_name, 'rb') as f1:
             tmp = pickle.load(f1)
-        # tmp = sum([v for k, v in tmp.items()], [])    # when process into flow format
+        # tmp = sum([v for k, v in tmp.items()], [])    # when process into flow format (dictionary)
         if len(tmp) > 200000:  # to avoid memory explosion
             random.seed(2022)
             tmp = random.sample(tmp, 200000)
@@ -391,40 +382,39 @@ def deal_cm(c_matrix):
     return P, R, F1
 
 
-def save_model(model, epoch, optimizer, loss, acc=None, f1=None, full=False):
-    t_str = datetime.datetime.now().strftime('%Y%m%d-%H%M%S')
-    # with open(os.path.join(MODEL_SAVE_PATH + t_str + '_eval_' + str(epoch) + '.pt'), 'wb') as f2:
-    #     torch.save(model, f2)  # only for inference, model = torch.load(path), then: model.eval()
-    model_name = MODEL_SAVE_PATH + str(NUM_LABELS) + '/new_rnn_2/' + t_str + '_train_' + str(epoch) + (
-        '_full.pt' if full else '.pt')
-    with open(os.path.join(model_name), 'wb') as f3:
-        if full:
-            torch.save(model, f3)
-        else:
+def save_model(model, epoch):
+    model_dir = MODEL_SAVE_PATH + DATA_MAP[NUM_LABELS] + '/'
+    if not os.path.exists(model_dir):
+        os.makedirs(model_dir)
+    model_name = model_dir + datetime.datetime.now().strftime('%Y%m%d-%H%M%S') + '_' + str(epoch) + '.pt'
+    with open(model_name, 'wb') as f2:
+        torch.save(model, f2)  # only for inference, model = torch.load(path), then: model.eval()
+    print('model successfully saved in path: {}'.format(model_name))
+
+    """ for training and inference, usage:
+        - Save model
             torch.save({
                 'epoch': epoch,
                 'model_state_dict': model.state_dict(),
                 'optimizer_state_dict': optimizer.state_dict(),
                 'loss': loss,
-                'best_accuracy': acc,
-                'best_f1': f1
             }, f3)
-    print('model successfully saved in path: {}'.format(model_name))
-    # for training and inference, usage:
-    """
-        model = TheModelClass(*args, **kwargs)
-        optimizer = TheOptimizerClass(*args, **kwargs)
-
-        checkpoint = torch.load(PATH)
-        model.load_state_dict(checkpoint['model_state_dict'])
-        optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
-        epoch = checkpoint['epoch']
-        loss = checkpoint['loss']
-        best_acc = checkpoint['best_accuracy']
-
-         model.eval()
-        # - or -
-        model.train()
+                
+        - load model
+            model = TheModelClass(*args, **kwargs)
+            optimizer = TheOptimizerClass(*args, **kwargs)
+    
+            checkpoint = torch.load(PATH)
+            model.load_state_dict(checkpoint['model_state_dict'])
+            optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
+            epoch = checkpoint['epoch']
+            loss = checkpoint['loss']
+        
+        - train or eval
+        
+            model.eval()
+            # - or -
+            model.train()
     """
 
 
