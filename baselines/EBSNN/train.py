@@ -3,7 +3,7 @@ from utils import *
 
 
 # device: 2 / 3
-def train_EBSNN(device=0, is_lstm=True, is_save=True, is_load=False):
+def train_EBSNN(device=0, is_lstm=True, is_save=True):
     print('EBSNN_{} of class {} on device {} start to train...\n'.format('LSTM' if is_lstm else 'GRU', len(CLASSES), device))
     train_loader, test_loader = get_dataloader(EXP_PERCENT, TEST_PERCENT, BATCH_SIZE)
 
@@ -61,7 +61,7 @@ def train_EBSNN(device=0, is_lstm=True, is_save=True, is_load=False):
             print('>> test accuracy increased !!!')
             best_acc = test_accuracy
             if is_save:
-                save_model(model, epoch, True)
+                save_model(model, epoch)
         if all_f1[-1] > best_f1:
             print('>> test f1-score increased !!!')
             best_f1 = all_f1[-1]
@@ -72,15 +72,14 @@ def train_EBSNN(device=0, is_lstm=True, is_save=True, is_load=False):
               '>> >> test accuracy: {}, best test accuracy: {},\n'
               '>> >> test f1-score: {}, best f1-score: {}'.format(epoch, train_total_loss / num_batch,
                                                                   test_accuracy, best_acc, all_f1[-1], best_f1))
-
         print('>> detailed test results of every label:\nlabel\tPrecision\tRecall\tF1-score')
         for key in LABELS:
             print('{}\t{}\t{}\t{}'.format(key, P[int(LABELS[key])], R[int(LABELS[key])], f1[int(LABELS[key])]))
-        if epoch > 20 and all_f1[-1] < best_f1 and all_f1[-2] < best_f1 and all_f1[-3] < best_f1 and all_f1[-4] < best_f1:
+        if epoch > 40 and max(all_f1[-5:]) < best_f1 and max(all_test_acc[-5:]) < best_acc:
             print('early stop with epoch: {}, \nbest test accuracy: {}, best f1-score: {}'.format(epoch, best_acc, best_f1))
             break
 
 
 if __name__ == '__main__':
-    train_EBSNN(device=0, is_lstm=False, is_save=True, is_load=False)
-    # train_EBSNN(device=0, is_lstm=False, is_save=True, is_load=False)
+    train_EBSNN(device=0, is_lstm=False, is_save=True)
+    # train_EBSNN(device=0, is_lstm=False, is_save=True

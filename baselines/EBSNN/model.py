@@ -1,53 +1,10 @@
 #!/usr/bin/env python
 # -*- coding:utf-8 -*-
-import datetime
-import os, time, sys
-import random
-from math import sin, cos, pow
-import numpy as np
-import torch, pickle
-from sklearn.metrics import accuracy_score, confusion_matrix
-from sklearn.model_selection import train_test_split
+import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from collections import Counter
-import matplotlib.pyplot as plt
 
-from utils import CUDA, BATCH_SIZE, DEVICE_COUNT, ALL_DEVICE, PADDING_IDX, PKT_MAX_LEN
-from torch.autograd.function import Function
-from sklearn.metrics import classification_report
-from sklearn.utils.multiclass import unique_labels
-
-
-class OneHot(Function):
-    byte_mask_cpu = torch.zeros((int(BATCH_SIZE/DEVICE_COUNT), PKT_MAX_LEN, PADDING_IDX + 1))
-    seq_cpu = torch.tensor([_ for _ in range(PADDING_IDX + 1)]).float().unsqueeze(1)
-    byte_mask = {}
-    seq = {}
-    if CUDA:
-        for device in ALL_DEVICE:
-            byte_mask[device] = byte_mask_cpu.cuda(device)
-            seq[device] = seq_cpu.cuda(device)
-
-    @staticmethod
-    def forward(ctx, inputs):
-        ctx.batch_size = inputs.size(0)
-        ctx.input_len = inputs.size(1)
-        ctx.device = '{}'.format(inputs.device)
-        inputs = inputs.long()
-        byte_mask = OneHot.byte_mask[ctx.device].scatter(2, inputs.view(ctx.batch_size, -1, 1).data, 1.)  # one-hot vector
-        byte_mask[:, :, PADDING_IDX:].fill_(0)
-        # ctx.byte_mask = byte_mask
-        return byte_mask
-
-    @staticmethod
-    def backward(ctx, grad_output):
-        # print('grad_output:', grad_output, grad_output.shape)
-        # grad_input = (grad_output * ctx.byte_mask).sum(2)
-        grad_input = torch.matmul(grad_output, OneHot.seq[ctx.device]).view(grad_output.size(0), -1)
-        # print('grad_input:', grad_input, grad_input.shape)
-        # ctx.byte_mask = None
-        return grad_input
+from utils import CUDA
 
 
 class EBSNN_LSTM(nn.Module):
@@ -63,9 +20,9 @@ class EBSNN_LSTM(nn.Module):
         self.rnn_directions = 2 if bidirectional else 1
 
         # 256 is 'gg', will be set [0,0..0]
-        # self.byte_embed = nn.Embedding(257, self.embedding_dim, padding_idx=256)
-        self.byte_one_hot = OneHot().apply
-        self.byte_embed = nn.Linear(257, self.embedding_dim, bias=False)
+        self.byte_embed = nn.Embedding(257, self.embedding_dim, padding_idx=256)
+        # self.byte_one_hot = OneHot().apply
+        # self.byte_embed = nn.Linear(257, self.embedding_dim, bias=False)
         # to one-hot
         self.byte_embed.requires_grad = True
 
@@ -145,8 +102,9 @@ class EBSNN_GRU(nn.Module):
         self.rnn_directions = 2 if bidirectional else 1
 
         # 256 is 'gg', will be set [0,0..0]
-        self.byte_one_hot = OneHot().apply
-        self.byte_embed = nn.Linear(257, self.embedding_dim, bias=False)
+        # self.byte_one_hot = OneHot().apply
+        # self.byte_embed = nn.Linear(257, self.embedding_dim, bias=False)
+        self.byte_embed = nn.Embedding(257, self.embedding_dim, padding_idx=256)
         # to one-hot
         self.byte_embed.requires_grad = True
         self.rnn1 = nn.GRU(input_size=self.embedding_dim,
