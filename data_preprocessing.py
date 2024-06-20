@@ -3,24 +3,53 @@
 
 import binascii
 import dpkt
+import pandas as pd
+import os
 from scapy.all import *
 from utils import *
+
+exclude_ports = [
+    5353, 137, 138, 5355,  # ip address relative pkt
+    17500, 1900  # db-lsp-disc/ssdp pkt
+]
+
+
+# 57621 mail
+# 4644 chat
+
+# 二分查找
+def binary_search(arr, target):
+    low = 0
+    high = len(arr) - 1
+    while low <= high:
+        mid = (low + high) // 2
+        if arr[mid] == target:
+            return mid
+        elif arr[mid] < target:
+            low = mid + 1
+        else:
+            high = mid - 1
+    return -1
 
 
 class PCAP_DPKT:
     def __init__(self, _file_in_dirs, _file_out_dir, flow_len=-1, byte_len=-1,
-                 flow_flag=False, uniform_byte_len=False, flow_min_len=2,
-                 _byte_min_len=-1):
+                 flow_flag=False, uniform_byte_len=False, header_len=50, is_payload=True,
+                 flow_min_len=2, _byte_min_len=-1):
         self.file_in_dirs = _file_in_dirs
         self.file_out_dir = _file_out_dir
         self.flow_len = flow_len
         self.byte_len = byte_len
         self.flow_flag = flow_flag
         self.uniform_byte_len = uniform_byte_len
+        self.header_len = header_len
+        self.is_payload = is_payload
         self.flow_min_len = flow_min_len
         self.byte_min_len = _byte_min_len
         if not os.path.exists(self.file_out_dir):
             os.makedirs(self.file_out_dir)
+        self.ports = []
+        self.get_known_ports('./data/service-names-port-numbers.csv')
 
     def get_idx_saved(self):
         invalid_total = 0
@@ -37,13 +66,13 @@ class PCAP_DPKT:
                 if os.path.isdir(file_path):
                     X = []
                     _s_t = time.time()
-                    valid_num, invalid_num = 0, 0   # of every label
+                    valid_num, invalid_num = 0, 0  # of every label
                     label_index += 1
                     label = file_name.lower()
                     print('>> start process files of label: {}'.format(label))
                     pcap_files = [os.path.join(file_path, pcap_file) for pcap_file in os.listdir(file_path)]
                     for pcap_file in pcap_files:
-                        _valid_num, _invalid_num = 0, 0     # of every pcap file (one label may contain many pcap file)
+                        _valid_num, _invalid_num = 0, 0  # of every pcap file (one label may contain many pcap file)
                         print('>> >> start read pcap: {}'.format(pcap_file))
                         try:
                             pcap = dpkt.pcap.Reader(open(pcap_file, 'rb'))
@@ -65,30 +94,16 @@ class PCAP_DPKT:
                                     if 'vpn' not in pcap_file:  # vpn traffic has no Ethernet header
                                         payload = pcap[i].payload
                                     version = payload.version
-                                    if len(payload.payload.payload) <= 0 or len(payload) <= PKT_MIN_LEN:
+                                    payload_len = len(payload.payload.payload)
+                                    header_len = len(payload) - payload_len
+                                    if (payload_len <= 0 or len(payload) <= PKT_MIN_LEN) and self.is_payload:
                                         _invalid_num += 1
                                         continue
                                     sport = payload.payload.sport
                                     dport = payload.payload.dport
                                     # some very nasty packets, whose payload has nothing useful!
-                                    if sport == 5353 or dport == 5353 or sport == 137 or sport == 138 or sport == 5355 or dport == 5355:
-                                        # print('skip ip address relative pkt') #  MDNS,
-                                        _invalid_num += 1
-                                        continue
-                                    # if sport == 161 or dport == 161:
-                                    #     # print('skip SNMP pkt')
-                                    #     _invalid_num += 1
-                                    #     continue
-                                    if sport == 17500 or dport == 17500 or sport == 1900 or dport == 1900:
-                                        # print('skip db-lsp-disc/ssdp pkt')
-                                        _invalid_num += 1
-                                        continue
-                                    if sport == 57621 or dport == 57621 and label == 'mail':
-                                        # print('skip broadcast pkt')
-                                        _invalid_num += 1
-                                        continue
-                                    if sport == 4644 or dport == 4644 and label == 'chat':
-                                        # print('skip broadcast pkt')
+                                    if sport in exclude_ports or dport in exclude_ports:
+                                        # print('skip ip address relative pkt/db-lsp-disc/ssdp pkt') #  MDNS, 161SNMP
                                         _invalid_num += 1
                                         continue
                                     if hasattr(payload.payload, 'flags') and hasattr(payload.payload.flags, 'value'):
@@ -108,13 +123,10 @@ class PCAP_DPKT:
                                         payload.offset = 0
                                     if hasattr(payload.payload, 'chksum'):
                                         payload.payload.chksum = 0
-                                    payload.payload.sport = 0
-                                    payload.payload.dport = 0
-                                    # if payload.payload.sport > 10000:
-                                    #     payload.payload.sport = 0
-                                    # if payload.payload.dport > 10000:
-                                    #     payload.payload.dport = 0
-
+                                    if binary_search(self.ports, sport) == -1:
+                                        payload.payload.sport = 0
+                                    if binary_search(self.ports, dport) == -1:
+                                        payload.payload.dport = 0
                                     if hasattr(payload.payload, 'ack'):
                                         payload.payload.ack = 0
                                     if hasattr(payload.payload, 'seq'):
@@ -128,7 +140,11 @@ class PCAP_DPKT:
                                     elif version == 6:
                                         res[8:40] = ['00'] * 32
                                     bytes_idx = [word_to_idx[w] for w in res]
-                                    X.append(bytes_idx)
+                                    header = bytes_idx[:header_len][:self.header_len]
+                                    if len(header) < self.header_len:
+                                        header = header + [0] * (self.header_len - len(header))
+                                    bytes_idx = header + bytes_idx[header_len:]
+                                    X.append(bytes_idx[:self.byte_len])
                                     _valid_num += 1
                                 except Exception as e:
                                     # print('>> >> error: {} in packet {}, label: {}'.format(e, i, label))
@@ -144,7 +160,15 @@ class PCAP_DPKT:
                                     # tcp or udp packet
                                     ip = eth.data
                                     v = ip.v
-                                    if len(ip) <= PKT_MIN_LEN or len(ip.data.data) <= 0:
+                                    payload_len = len(ip.data.data)
+                                    header_len = len(ip) - payload_len
+                                    if (len(ip) <= PKT_MIN_LEN or payload_len <= 0) and self.is_payload:
+                                        _invalid_num += 1
+                                        continue
+                                    sport = ip.data.sport
+                                    dport = ip.data.dport
+                                    if sport in exclude_ports or dport in exclude_ports:
+                                        # print('skip ip address relative pkt/db-lsp-disc/ssdp pkt') #  MDNS, 161SNMP
                                         _invalid_num += 1
                                         continue
                                     if hasattr(ip.data, 'flags'):
@@ -156,32 +180,6 @@ class PCAP_DPKT:
                                             # print('skip SYN pkt')
                                             _invalid_num += 1
                                             continue
-                                    sport = ip.data.sport
-                                    dport = ip.data.dport
-                                    if sport == 5353 or dport == 5353 or sport == 137 or sport == 138 or sport == 5355 or dport == 5355:
-                                        # print('skip MDNS or NBNS pkt')
-                                        _invalid_num += 1
-                                        continue
-                                    # if sport == 161 or dport == 161:
-                                    #     # print('skip MDNS or NBNS pkt')
-                                    #     _invalid_num += 1
-                                    #     continue
-                                    if sport == 17500 or dport == 17500 or sport == 1900 or dport == 1900:
-                                        # print('skip db-lsp-disc/ssdp pkt')
-                                        _invalid_num += 1
-                                        continue
-                                    if sport == 57621 or dport == 57621 and label == 'mail':
-                                        # print('skip broadcast pkt')
-                                        _invalid_num += 1
-                                        continue
-                                    if sport == 4644 or dport == 4644 and label == 'chat':
-                                        # print('skip broadcast pkt')
-                                        _invalid_num += 1
-                                        continue
-                                    # if ip.src == b'\xff\xff\xff\xff' or ip.dst == b'\xff\xff\xff\xff':
-                                    #     # print('skip broadcast pkt')
-                                    #     _invalid_num += 1
-                                    #     continue
                                     if v == 4:
                                         ip.src = b'\x00' * 4
                                         ip.dst = b'\x00' * 4
@@ -192,12 +190,10 @@ class PCAP_DPKT:
                                         ip.id = 0
                                     if hasattr(ip, 'offset'):
                                         ip.offset = 0
-                                    ip.data.sport = 0
-                                    ip.data.dport = 0
-                                    # if ip.data.sport > 10000:
-                                    #     ip.data.sport = 0
-                                    # if ip.data.dport > 10000:
-                                    #     ip.data.dport = 0
+                                    if binary_search(self.ports, sport) == -1:
+                                        ip.data.sport = 0
+                                    if binary_search(self.ports, dport) == -1:
+                                        ip.data.dport = 0
                                     if hasattr(ip, 'sum'):
                                         ip.sum = 0
                                     if hasattr(ip.data, 'sum'):
@@ -210,7 +206,11 @@ class PCAP_DPKT:
                                         res = res[:2 * self.byte_len]
                                     res = [''.join(x).upper() for x in zip(res[::2], res[1::2])]
                                     bytes_idx = [word_to_idx[w] for w in res]
-                                    X.append(bytes_idx)
+                                    header = bytes_idx[:header_len][:self.header_len]
+                                    if len(header) < self.header_len:
+                                        header = header + [0] * (self.header_len - len(header))
+                                    bytes_idx = header + bytes_idx[header_len:]
+                                    X.append(bytes_idx[:self.byte_len])
                                     _valid_num += 1
                                 except Exception as e:
                                     # print('>> >> error: {} in packet {}, label: {}'.format(e, _valid_num + _invalid_num, label))
@@ -220,7 +220,7 @@ class PCAP_DPKT:
                         # print('valid packets: {}. skip {} (invalid) packets in file: {}'.format(_valid_num, _invalid_num, pcap_file))
                     invalid_total += invalid_num
                     valid_total += valid_num
-                    print('>> processed files of label: {} done with {}s, valid packets: {}. skip {} (invalid) packets'.format(
+                    print('>> label: {} done with {}s, valid packets: {}. skip {} (invalid) packets'.format(
                             label, time.time() - _s_t, valid_num, invalid_num))
 
                     _s_t = time.time()
@@ -232,10 +232,21 @@ class PCAP_DPKT:
             time.time() - s_t_out, valid_total, invalid_total))
         _s_t = time.time()
 
-
     def count_flows(self):
         pass
 
+    def get_known_ports(self, csv_path):
+        if os.path.exists('./data/ports.pkl'):
+            with open('./data/ports.pkl', 'rb') as f:
+                self.ports = pickle.load(f)
+        else:
+            df = pd.read_csv(csv_path)
+            ports = df['Port Number'].unique()
+            ports = [int(port) for port in ports if str(port).isdigit()]
+            ports = sorted(ports)
+            self.ports = ports
+            with open('./data/ports.pkl', 'wb') as f:
+                pickle.dump(ports, f)
 
     def get_flows(self):
         invalid_total = 0
@@ -280,14 +291,16 @@ class PCAP_DPKT:
                                 if 'vpn' not in pcap_file:
                                     payload = pcap[i].payload
                                 version = payload.version
-                                if len(payload.payload.payload) <= 0 or len(payload) <= PKT_MIN_LEN:
+                                payload_len = len(payload.payload.payload)
+                                header_len = len(payload) - payload_len
+                                if (payload_len <= 0 or len(payload) <= PKT_MIN_LEN) and self.is_payload:
                                     invalid_pcap += 1
                                     continue
                                 src = payload.src
                                 dst = payload.dst
                                 sport = payload.payload.sport
                                 dport = payload.payload.dport
-                                if sport == 5353 or sport == 137 or sport == 138 or dport == 5353 or dport == 137 or dport == 138:
+                                if sport in exclude_ports or dport in exclude_ports:
                                     # print('skip ip address relative pkt')
                                     invalid_pcap += 1
                                     continue
@@ -302,9 +315,9 @@ class PCAP_DPKT:
                                         continue
                                 proto = payload.proto
                                 type_a = (src, dst, sport, dport, proto, pcap_file)  # a and b belong to the same flow
-                                type_b = (dst, src, dport, sport, proto, pcap_file)  #
+                                type_b = (dst, src, dport, sport, proto, pcap_file)  # i.e., bidirectional flow
 
-                                if type_a in flows:     # select the first 10 packets in the flow
+                                if type_a in flows:  # select the first 10 packets in the flow
                                     if len(flows[type_a]) >= 10:
                                         continue
                                 if type_b in flows:
@@ -319,12 +332,10 @@ class PCAP_DPKT:
                                     payload.offset = 0
                                 if hasattr(payload.payload, 'chksum'):
                                     payload.payload.chksum = 0
-                                # if payload.payload.sport > 10000:
-                                #     payload.payload.sport = 0
-                                # if payload.payload.dport > 10000:
-                                #     payload.payload.dport = 0
-                                payload.payload.sport = 0
-                                payload.payload.dport = 0
+                                if binary_search(self.ports, sport) == -1:
+                                    payload.payload.sport = 0
+                                if binary_search(self.ports, dport) == -1:
+                                    payload.payload.dport = 0
                                 if hasattr(payload.payload, 'ack'):
                                     payload.payload.ack = 0
                                 if hasattr(payload.payload, 'seq'):
@@ -339,7 +350,10 @@ class PCAP_DPKT:
                                     res[12:20] = [paddings] * 8
                                 elif version == 6:
                                     res[8:40] = [paddings] * 32
-
+                                header = res[:header_len][:self.header_len]
+                                if len(header) < self.header_len:
+                                    header = header + [0] * (self.header_len - len(header))
+                                res = (header + res[header_len:])[:self.byte_len]
                                 # type_a and b belong to the same flow and share the same key in the dictionary
                                 if type_a in flows:
                                     flows[type_a].append(res)
@@ -357,20 +371,22 @@ class PCAP_DPKT:
                                 eth = dpkt.ethernet.Ethernet(buf)
                                 ip = eth.data
                                 v = ip.v
-                                if len(ip) <= PKT_MIN_LEN or len(ip.data.data) <= 0:
+                                payload_len = len(ip.data.data)
+                                header_len = len(ip) - payload_len
+                                if (len(ip) <= PKT_MIN_LEN or payload_len <= 0) and self.is_payload:
                                     invalid_pcap += 1
                                     continue
                                 src = ip.src
                                 dst = ip.dst
                                 sport = ip.data.sport
                                 dport = ip.data.dport
-                                if sport == 5353 or sport == 137 or sport == 138 or dport == 5353 or dport == 137 or dport == 138:
+                                if sport in exclude_ports or dport in exclude_ports:
                                     # print('skip MDNS or NBNS pkt')
                                     invalid_pcap += 1
                                     continue
                                 proto = ip.p
-                                type_a = (src, dst, sport, dport, proto, pcap_file)
-                                type_b = (dst, src, dport, sport, proto, pcap_file)
+                                type_a = (src, dst, sport, dport, proto, pcap_file)  # a and b belong to the same flow
+                                type_b = (dst, src, dport, sport, proto, pcap_file)  # i.e., bidirectional flow
 
                                 if type_a in flows:
                                     if len(flows[type_a]) >= 10:
@@ -399,12 +415,10 @@ class PCAP_DPKT:
                                     ip.id = 0
                                 if hasattr(ip, 'offset'):
                                     ip.offset = 0
-                                # if ip.data.sport > 10000:
-                                #     ip.data.sport = 0
-                                # if ip.data.dport > 10000:
-                                #     ip.data.dport = 0
-                                ip.data.sport = 0
-                                ip.data.dport = 0
+                                if binary_search(self.ports, sport):
+                                    ip.data.sport = 0
+                                if binary_search(self.ports, dport):
+                                    ip.data.dport = 0
                                 if hasattr(ip, 'sum'):
                                     ip.sum = 0
                                 if hasattr(ip.data, 'sum'):
@@ -417,6 +431,11 @@ class PCAP_DPKT:
                                     res = res[:2 * self.byte_len]
                                 res = [''.join(x).upper() for x in zip(res[::2], res[1::2])]
                                 res = [word_to_idx[w] for w in res]
+                                header = res[:header_len][:self.header_len]
+                                if len(header) < self.header_len:
+                                    header = header + [0] * (self.header_len - len(header))
+                                res = (header + res[header_len:])[:self.byte_len]
+
                                 if type_a in flows:
                                     flows[type_a].append(res)
                                 elif type_b in flows:
@@ -428,17 +447,10 @@ class PCAP_DPKT:
                             except Exception as e:
                                 # print('>> >> error: {} in packet {}, label: {}'.format(e, valid_pcap + invalid_pcap, label))
                                 invalid_pcap += 1
-                    for key in flows.keys():    # exclude flows that only have few packets
+                    for key in flows.keys():  # exclude flows that only have few packets
                         if len(flows[key]) < 2:
                             valid_pcap -= len(flows[key])
                             flows[key] = []
-                    # for key in flows:
-                    #     if len(flows[key]) == 2:
-                    #         (src, dst, sport, dport, proto, pcap_file) = key
-                    #         if sport == 53 or dport == 53:
-                    #             flows[key] = []
-                    #             invalid_pcap += 2
-                    #             valid_pcap -= 2
                     invalid_label += invalid_pcap
                     valid_label += valid_pcap
                     print('valid packets: {}. skip {} (invalid) packets in file: {}'.format(
@@ -446,13 +458,12 @@ class PCAP_DPKT:
                 invalid_total += invalid_label
                 valid_total += valid_label
 
-                print('\n>> process files of label: {} done with {}s, flows: {}\n '
-                      'valid packets: {}. skip {} (invalid) packets'.format(
-                        label, time.time() - s_t_one_label, len(flows), valid_label, invalid_label))
+                print('\n>> label: {} done with {}s, flows: {}\n   valid packets: {}. skip {} (invalid) packets'.format(
+                    label, time.time() - s_t_one_label, len(flows), valid_label, invalid_label))
                 s_t_one_label = time.time()
-                if len(flows) <= 300:
-                    print("packet number <= 300, skip!")
-                    continue
+                # if len(flows) <= 300:     # not enough for training
+                #     print("packet number <= 300, skip!")
+                #     continue
                 with open(self.file_out_dir + label + '.pkl', 'wb') as f1:
                     pickle.dump(flows, f1)
                 print('dump flows cost {}s\n'.format(time.time() - s_t_one_label))
@@ -466,6 +477,6 @@ if __name__ == '__main__':
     # _file_out_dir = './data/' + DATA_MAP[NUM_LABELS] + '_flow/'
 
     traffic = PCAP_DPKT(_file_in_dir, _file_out_dir, byte_len=PKT_MAX_LEN)
-    traffic.get_idx_saved()
+    # traffic.get_idx_saved()
     # traffic.get_flows()
     print('\ndata_preprocessing.py finished with {}s'.format(time.time() - s_t_main))
