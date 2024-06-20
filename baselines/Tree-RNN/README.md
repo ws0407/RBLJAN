@@ -1,6 +1,6 @@
 ## Tree-RNN
 
-This is an implementation for "Tree-rnn: Tree structural recurrent neural network for network traffic classification", we reproduced their method based on their paper.
+This is an implementation (a reproduction version) for "Tree-rnn: Tree structural recurrent neural network for network traffic classification", we reproduced their method based on their paper.
 
 * The preprocessing phase is the same as `RBLJAN`.
 * The training phase is a bit complex, you should train many LSTMs to build a classification tree. The dataset division of our work is list in the appendix for reference.
@@ -10,7 +10,7 @@ This is an implementation for "Tree-rnn: Tree structural recurrent neural networ
 My category division (tree structure)
 
 * the division rules is based on the paper
-* the index below is the category index accoding to our implementation (refer to utils.py, the `LABELS`)
+* the index below is the category index accoding to our implementation (refer to [utils.py](./utils.py), the `LABELS`)
 * as our dataset is composed of many classes, the tree is very large, so we need to train many models to complete the classification task...
 * for the evaluation task, we predict packets one by one (batch_size = 1) as it is difficult to predict a batch. It may be extended to batch prediction by quick sort after every node of the tree (if you want to).
 

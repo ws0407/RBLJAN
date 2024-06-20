@@ -1,11 +1,11 @@
-# Data PrePrecessing
+# Data PreProcessing
 
 ## Download
 
 download the dataset from the link below or select another traffic dataset
 
-- [X-APP](https://drive.google.com/file/d/1C-K9V03plCPrv5k3lvrwVLxCkm-WPlk5/view?usp=drive_link)
-- [X-WEB](https://drive.google.com/file/d/1S_4Z1i5vwU3nFya08UYlrvpUFFkl-r1f/view?usp=drive_link)
+- [X-APP](https://drive.google.com/file/d/1S_4Z1i5vwU3nFya08UYlrvpUFFkl-r1f/view?usp=drive_link)
+- [X-WEB](https://drive.google.com/file/d/1C-K9V03plCPrv5k3lvrwVLxCkm-WPlk5/view?usp=drive_link)
 - [USTC-TFC](https://github.com/yungshenglu/USTC-TFC2016)
 - [ISCX-VPN](https://www.unb.ca/cic/datasets/vpn.html)
 
@@ -15,7 +15,7 @@ download the dataset from the link below or select another traffic dataset
 * the subfolders of the `./data/X-APP/` are all named candidate labels (e.g., `./data/X-APP/Viemo/`)
 * `./data/X-APP/Viemo/` contains all PCAP files of this label
 
-```python
+```
 data/
   ├── dataset1
   │      ├── label_1
