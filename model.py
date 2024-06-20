@@ -83,7 +83,7 @@ class RBLJAN_Classifier(nn.Module):
         self.kernel_h = KERNEL_NUM_HEADER
         self.kernel_p = KERNEL_NUM_PAYLOAD
         self.head_h = 5
-        self.head_p = 20
+        self.head_p = 25
         self.dropout = DROPOUT
         self.position_embed_matrix = position_embed_matrix.float()
         self.overall_label_idx = overall_label_idx
