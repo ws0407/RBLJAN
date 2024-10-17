@@ -6,7 +6,7 @@ In this repository you will find a Python implementation of RBLJAN; a Robust Byt
 
 *Xiao X, Wang S, Hu G, et al. RBLJAN: Robust Byte-Label Joint Attention Network for Network Traffic Classification[J]. IEEE Transactions on Dependable and Secure Computing, 2024.*
 
-DOI: [https://doi.org/10.1109/TDSC.2024.3478838](DOI:https://doi.org/10.1109/TDSC.2024.3478838https:/)
+DOI: [https://doi.org/10.1109/TDSC.2024.3478838](https://doi.org/10.1109/TDSC.2024.3478838)
 
 If you use any derivative of this code in your work, please cite our publicaiton.
 
